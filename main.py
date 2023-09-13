@@ -1,8 +1,12 @@
+import requests
 import vk_api
-from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.utils import get_random_id
-from config import vk_token
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+
+from config import vk_token, weather_token
 
 
 def load_from_db():
@@ -55,17 +59,72 @@ def fix_city(longpoll, session_api, user_id, user_name):
                 break
 
 
+def currency_parser():
+    currency_lst = []
+    urls = [
+        'https://www.google.com/search?q=курс+доллара+к+рублю',
+        'https://www.google.com/search?q=курс+евро+к+рублю',
+        'https://www.google.com/search?q=китайский+юань+к+рублю',
+        'https://www.google.com/search?q=курс+йены+к+рублю',
+        'https://www.google.com/search?q=фунт+стерлингов+к+рублю'
+    ]
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 OPR/100.0.0.0'}
+    for url in urls:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            currency = soup.findAll('span', {'class': 'DFlfde SwHCTb'})
+            currency_lst.append(currency[0].text)
+    return currency_lst
+
+
+def weather(user_city_db):
+    temperature = 0
+    r = requests.get(
+        f'https://api.openweathermap.org/data/2.5/weather?q={user_city_db}&appid={weather_token}&units=metric&lang=ru')
+    if r.status_code == 200:
+        accepted_data = r.json()
+        temperature = accepted_data['main']['temp']
+    return temperature
+
+
+def tomorrow_weather(user_city_db):
+    temperature_lst = []
+    temperature_tomorrow = 0
+    tomorrow_day = datetime.today() + timedelta(days=1)
+    date_str = tomorrow_day.strftime('%Y-%m-%d')
+    rr = requests.get(
+        f'https://api.openweathermap.org/data/2.5/forecast?q={user_city_db}&appid={weather_token}&units=metric&lang=ru')
+    if rr.status_code == 200:
+        forecast_data = rr.json()
+        for item in forecast_data['list']:
+            if item['dt_txt'].startswith(date_str):
+                temperature_lst.append(item['main']['temp'])
+        int_temp = [int(x) for x in temperature_lst]
+        temperature_tomorrow = sum(int_temp) / len(int_temp)
+    return temperature_tomorrow
+
+
+def get_userdata_db(data_db, user_id):
+    user_city_db = ''
+    for item in data_db:
+        parts = item.split(':')
+        if len(parts) == 2:
+            item_id, item_city = parts
+            item_int_id = int(item_id)
+            if item_int_id == user_id:
+                user_city_db = item_city
+    return user_city_db
+
+
 def main_keyboard(session_api, user_id):
-    main_keyboard = VkKeyboard(one_time=True)
-    main_keyboard.add_button('Погода', color=VkKeyboardColor.SECONDARY)
-    main_keyboard.add_button('Пробка', color=VkKeyboardColor.SECONDARY)
-    main_keyboard.add_button('Афиша', color=VkKeyboardColor.SECONDARY)
-    main_keyboard.add_button('Валюта', color=VkKeyboardColor.SECONDARY)
+    with open('keyboard.json', 'r') as file:
+        main_keyboard = file.read()
     session_api.messages.send(
         user_id=user_id,
         message='Доступные кнопки:',
         random_id=get_random_id(),
-        keyboard=main_keyboard.get_keyboard(),
+        keyboard=main_keyboard,
     )
 
 
@@ -123,16 +182,70 @@ def main():
             if message == 'Неправильный город':
                 fix_city(longpoll, session_api, user_id, user_name)
 
-            if message == 'Погода':
+            if message == 'Изменить город':
+                fix_city(longpoll, session_api, user_id, user_name)
+
+            # back button
+            if message == 'Назад':
                 main_keyboard(session_api, user_id)
 
-            if message == 'Пробка':
+            if message == 'Погода':
+                weather_keyboard = VkKeyboard(one_time=True)
+                weather_keyboard.add_button('Погода сегодня', color=VkKeyboardColor.SECONDARY)
+                weather_keyboard.add_button('Погода завтра', color=VkKeyboardColor.SECONDARY)
+                weather_keyboard.add_button('Назад', color=VkKeyboardColor.NEGATIVE)
+                session_api.messages.send(
+                    user_id=user_id,
+                    message='Доступные варианты:',
+                    random_id=get_random_id(),
+                    keyboard=weather_keyboard.get_keyboard(),
+                )
+
+            if message == 'Погода сегодня':
+                user_city_db = get_userdata_db(data_db, user_id)
+                temperature = weather(user_city_db)
+                session_api.messages.send(
+                    user_id=user_id,
+                    message=f'Сегодня {int(temperature)}C°',
+                    random_id=get_random_id(),
+                    keyboard=weather_keyboard.get_keyboard(),
+                )
+
+            if message == 'Погода завтра':
+                user_city_db = get_userdata_db(data_db, user_id)
+                temperature_tomorrow = tomorrow_weather(user_city_db)
+                session_api.messages.send(
+                    user_id=user_id,
+                    message=f'Завтра приблизительно {int(temperature_tomorrow)}C°',
+                    random_id=get_random_id(),
+                    keyboard=weather_keyboard.get_keyboard(),
+                )
+
+            if message == 'Пробки':
+                session_api.messages.send(
+                    user_id=user_id,
+                    message='В данный момент данные недоступны',
+                    random_id=get_random_id(),
+                )
                 main_keyboard(session_api, user_id)
 
             if message == 'Афиша':
+                session_api.messages.send(
+                    user_id=user_id,
+                    message='В данный момент данные недоступны',
+                    random_id=get_random_id(),
+                )
                 main_keyboard(session_api, user_id)
 
             if message == 'Валюта':
+                currency_lst = currency_parser()
+                usd_curr, eur_curr, cny_curr, jpy_curr, gbp_curr = currency_lst
+                currency_text = f'Курсы валют на сегодня:\n1 Доллар США равен {usd_curr} рублей\n1 Евро равен {eur_curr} рублей\n1 Китайский юань равен {cny_curr} рублей\n1 Японская Йена равна {jpy_curr} рублей\n1 Британский фунт стерлингов равен {gbp_curr} рублей'
+                session_api.messages.send(
+                    user_id=user_id,
+                    message=currency_text,
+                    random_id=get_random_id(),
+                )
                 main_keyboard(session_api, user_id)
 
 
