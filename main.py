@@ -9,16 +9,12 @@ from bs4 import BeautifulSoup
 from config import vk_token, weather_token
 
 
-def load_from_db():
+def check_data(user_id):
+    found_items = False
     data_db = []
     with open('user_data.txt', 'r') as file:
         for line in file:
             data_db.append(line.strip())
-    return data_db
-
-
-def check_data(data_db, user_id):
-    found_items = False
     for item in data_db:
         parts = item.split(':')
         if len(parts) == 2:
@@ -68,7 +64,8 @@ def currency_parser():
         'https://www.google.com/search?q=курс+йены+к+рублю',
         'https://www.google.com/search?q=фунт+стерлингов+к+рублю'
     ]
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 OPR/100.0.0.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                             'Chrome/114.0.0.0 Safari/537.36 OPR/100.0.0.0'}
     for url in urls:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
@@ -105,8 +102,12 @@ def tomorrow_weather(user_city_db):
     return temperature_tomorrow
 
 
-def get_userdata_db(data_db, user_id):
+def get_userdata_db(user_id):
     user_city_db = ''
+    data_db = []
+    with open('user_data.txt', 'r') as file:
+        for line in file:
+            data_db.append(line.strip())
     for item in data_db:
         parts = item.split(':')
         if len(parts) == 2:
@@ -131,7 +132,6 @@ def main_keyboard(session_api, user_id):
 def main():
     # init vk_api
 
-    data_db = load_from_db()
     vk_session = vk_api.VkApi(token=vk_token)
     session_api = vk_session.get_api()
     longpoll = VkLongPoll(vk_session)
@@ -150,7 +150,7 @@ def main():
             # Start message
 
             if message == "Начать":
-                found_items = check_data(data_db, user_id)
+                found_items = check_data(user_id)
                 if found_items is True:
                     main_keyboard(session_api, user_id)
                 else:
@@ -202,7 +202,7 @@ def main():
                 )
 
             if message == 'Погода сегодня':
-                user_city_db = get_userdata_db(data_db, user_id)
+                user_city_db = get_userdata_db(user_id)
                 temperature = weather(user_city_db)
                 session_api.messages.send(
                     user_id=user_id,
@@ -212,11 +212,11 @@ def main():
                 )
 
             if message == 'Погода завтра':
-                user_city_db = get_userdata_db(data_db, user_id)
+                user_city_db = get_userdata_db(user_id)
                 temperature_tomorrow = tomorrow_weather(user_city_db)
                 session_api.messages.send(
                     user_id=user_id,
-                    message=f'Завтра приблизительно {int(temperature_tomorrow)}C°',
+                    message=f'Среднесуточная температура завтра {int(temperature_tomorrow)}C°',
                     random_id=get_random_id(),
                     keyboard=weather_keyboard.get_keyboard(),
                 )
@@ -240,7 +240,7 @@ def main():
             if message == 'Валюта':
                 currency_lst = currency_parser()
                 usd_curr, eur_curr, cny_curr, jpy_curr, gbp_curr = currency_lst
-                currency_text = f'Курсы валют на сегодня:\n1 Доллар США равен {usd_curr} рублей\n1 Евро равен {eur_curr} рублей\n1 Китайский юань равен {cny_curr} рублей\n1 Японская Йена равна {jpy_curr} рублей\n1 Британский фунт стерлингов равен {gbp_curr} рублей'
+                currency_text = f'Курсы валют на сегодня:\n1$ Доллар США равен {usd_curr} рублей\n1€ Евро равен {eur_curr} рублей\n1¥ Китайский юань равен {cny_curr} рублей\n1¥ Японская йена равна {jpy_curr} рублей\n1£ Британский фунт стерлингов равен {gbp_curr} рублей'
                 session_api.messages.send(
                     user_id=user_id,
                     message=currency_text,
